@@ -25,30 +25,43 @@ struct Args {
     /// Filter by language (comma-separated, e.g., "rust,python,js")
     #[arg(long, short = 'l', value_delimiter = ',')]
     lang: Option<Vec<String>>,
+
+    /// Exclude languages (comma-separated, e.g., "json,yaml,md")
+    #[arg(long, short = 'i', value_delimiter = ',')]
+    ignore: Option<Vec<String>>,
 }
 
-fn matches_filter(lang: &str, filter: &Option<Vec<String>>) -> bool {
-    match filter {
+fn lang_matches(lang: &str, filter: &str) -> bool {
+    let f_lower = filter.to_lowercase();
+    let lang_lower = lang.to_lowercase();
+    lang_lower == f_lower
+        || lang_lower.starts_with(&f_lower)
+        || match f_lower.as_str() {
+            "js" => lang == "JavaScript",
+            "ts" => lang == "TypeScript",
+            "py" => lang == "Python",
+            "rb" => lang == "Ruby",
+            "rs" => lang == "Rust",
+            "cpp" | "c++" => lang == "C++",
+            "cs" | "csharp" => lang == "C#",
+            "md" => lang == "Markdown",
+            "yml" => lang == "YAML",
+            "sh" => lang == "Shell",
+            _ => false,
+        }
+}
+
+fn matches_filter(lang: &str, include: &Option<Vec<String>>, exclude: &Option<Vec<String>>) -> bool {
+    // Check exclude first
+    if let Some(excludes) = exclude {
+        if excludes.iter().any(|f| lang_matches(lang, f)) {
+            return false;
+        }
+    }
+    // Then check include
+    match include {
         None => true,
-        Some(langs) => langs.iter().any(|f| {
-            let f_lower = f.to_lowercase();
-            let lang_lower = lang.to_lowercase();
-            lang_lower == f_lower
-                || lang_lower.starts_with(&f_lower)
-                || match f_lower.as_str() {
-                    "js" => lang == "JavaScript",
-                    "ts" => lang == "TypeScript",
-                    "py" => lang == "Python",
-                    "rb" => lang == "Ruby",
-                    "rs" => lang == "Rust",
-                    "cpp" | "c++" => lang == "C++",
-                    "cs" | "csharp" => lang == "C#",
-                    "md" => lang == "Markdown",
-                    "yml" => lang == "YAML",
-                    "sh" => lang == "Shell",
-                    _ => false,
-                }
-        }),
+        Some(includes) => includes.iter().any(|f| lang_matches(lang, f)),
     }
 }
 
@@ -152,7 +165,7 @@ fn count_lines_str(content: &str) -> usize {
     content.lines().count()
 }
 
-fn scan_directory(path: &Path, filter: &Option<Vec<String>>) -> HashMap<&'static str, usize> {
+fn scan_directory(path: &Path, include: &Option<Vec<String>>, exclude: &Option<Vec<String>>) -> HashMap<&'static str, usize> {
     let mut stats: HashMap<&'static str, usize> = HashMap::new();
 
     let builder = WalkBuilder::new(path);
@@ -161,7 +174,7 @@ fn scan_directory(path: &Path, filter: &Option<Vec<String>>) -> HashMap<&'static
             if let Some(ext) = entry.path().extension() {
                 if let Some(ext_str) = ext.to_str() {
                     if let Some(lang) = get_language(ext_str) {
-                        if matches_filter(lang, filter) {
+                        if matches_filter(lang, include, exclude) {
                             let lines = count_lines(&entry.path().to_path_buf());
                             *stats.entry(lang).or_insert(0) += lines;
                         }
@@ -276,7 +289,7 @@ fn get_commits(repo_path: &Path, samples: usize) -> Vec<CommitInfo> {
     sampled
 }
 
-fn count_lines_at_commit(repo_path: &Path, commit: &str, filter: &Option<Vec<String>>) -> usize {
+fn count_lines_at_commit(repo_path: &Path, commit: &str, include: &Option<Vec<String>>, exclude: &Option<Vec<String>>) -> usize {
     // Get list of files at this commit
     let output = Command::new("git")
         .args(["ls-tree", "-r", "--name-only", commit])
@@ -294,7 +307,7 @@ fn count_lines_at_commit(repo_path: &Path, commit: &str, filter: &Option<Vec<Str
             .unwrap_or("");
 
         if let Some(lang) = get_language(ext) {
-            if matches_filter(lang, filter) {
+            if matches_filter(lang, include, exclude) {
                 // Get file content at this commit
                 let content_output = Command::new("git")
                     .args(["show", &format!("{}:{}", commit, file)])
@@ -314,7 +327,7 @@ fn count_lines_at_commit(repo_path: &Path, commit: &str, filter: &Option<Vec<Str
     total
 }
 
-fn show_history(repo_path: &Path, samples: usize, filter: &Option<Vec<String>>) {
+fn show_history(repo_path: &Path, samples: usize, include: &Option<Vec<String>>, exclude: &Option<Vec<String>>) {
     let commits = get_commits(repo_path, samples);
 
     if commits.is_empty() {
@@ -328,7 +341,7 @@ fn show_history(repo_path: &Path, samples: usize, filter: &Option<Vec<String>>) 
     let mut max_lines: usize = 0;
 
     for commit in &commits {
-        let lines = count_lines_at_commit(repo_path, &commit.hash, filter);
+        let lines = count_lines_at_commit(repo_path, &commit.hash, include, exclude);
         max_lines = max_lines.max(lines);
         history.push((commit.date.clone(), lines));
         eprint!(".");
@@ -369,14 +382,14 @@ fn main() {
 
     if args.history {
         let repo_path = &args.paths[0];
-        show_history(repo_path, args.samples, &args.lang);
+        show_history(repo_path, args.samples, &args.lang, &args.ignore);
         return;
     }
 
     let mut stats: HashMap<&'static str, usize> = HashMap::new();
 
     for path in &args.paths {
-        let path_stats = scan_directory(path, &args.lang);
+        let path_stats = scan_directory(path, &args.lang, &args.ignore);
         for (lang, count) in path_stats {
             *stats.entry(lang).or_insert(0) += count;
         }
