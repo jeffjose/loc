@@ -3,7 +3,8 @@ use colored::Colorize;
 use ignore::WalkBuilder;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "loc")]
@@ -12,6 +13,14 @@ struct Args {
     /// Directories to scan (defaults to current directory)
     #[arg(default_value = ".")]
     paths: Vec<PathBuf>,
+
+    /// Show lines of code history over time (from git)
+    #[arg(long, short = 'H')]
+    history: bool,
+
+    /// Number of commits to sample for history (default: 10)
+    #[arg(long, default_value = "10")]
+    samples: usize,
 }
 
 fn get_language(extension: &str) -> Option<&'static str> {
@@ -57,86 +66,50 @@ fn get_language(extension: &str) -> Option<&'static str> {
     }
 }
 
-fn colorize_language(lang: &str) -> String {
+fn get_color(lang: &str) -> (u8, u8, u8) {
     match lang {
-        "Rust" => lang.truecolor(222, 165, 132).to_string(),
-        "Python" => lang.truecolor(55, 118, 171).to_string(),
-        "JavaScript" => lang.truecolor(247, 223, 30).to_string(),
-        "TypeScript" => lang.truecolor(49, 120, 198).to_string(),
-        "Go" => lang.truecolor(0, 173, 216).to_string(),
-        "Ruby" => lang.truecolor(204, 52, 45).to_string(),
-        "Java" => lang.truecolor(176, 114, 25).to_string(),
-        "C" => lang.truecolor(85, 85, 85).to_string(),
-        "C++" => lang.truecolor(243, 75, 125).to_string(),
-        "C/C++ Header" => lang.truecolor(168, 132, 189).to_string(),
-        "C#" => lang.truecolor(104, 33, 122).to_string(),
-        "PHP" => lang.truecolor(119, 123, 180).to_string(),
-        "Swift" => lang.truecolor(255, 172, 69).to_string(),
-        "Kotlin" => lang.truecolor(169, 123, 255).to_string(),
-        "Scala" => lang.truecolor(194, 45, 64).to_string(),
-        "HTML" => lang.truecolor(227, 76, 38).to_string(),
-        "CSS" => lang.truecolor(86, 61, 124).to_string(),
-        "SCSS" => lang.truecolor(198, 83, 140).to_string(),
-        "JSON" => lang.truecolor(41, 41, 41).to_string(),
-        "YAML" => lang.truecolor(203, 23, 30).to_string(),
-        "TOML" => lang.truecolor(156, 66, 33).to_string(),
-        "Markdown" => lang.truecolor(8, 63, 161).to_string(),
-        "Shell" => lang.truecolor(137, 224, 81).to_string(),
-        "SQL" => lang.truecolor(224, 142, 42).to_string(),
-        "Lua" => lang.truecolor(0, 0, 128).to_string(),
-        "R" => lang.truecolor(25, 140, 231).to_string(),
-        "Dart" => lang.truecolor(0, 180, 171).to_string(),
-        "Zig" => lang.truecolor(236, 145, 92).to_string(),
-        "Nim" => lang.truecolor(255, 233, 83).to_string(),
-        "Elixir" => lang.truecolor(110, 74, 126).to_string(),
-        "Erlang" => lang.truecolor(161, 0, 52).to_string(),
-        "Haskell" => lang.truecolor(94, 80, 134).to_string(),
-        "OCaml" => lang.truecolor(238, 122, 0).to_string(),
-        "Vue" => lang.truecolor(65, 184, 131).to_string(),
-        "Svelte" => lang.truecolor(255, 62, 0).to_string(),
-        _ => lang.white().to_string(),
+        "Rust" => (222, 165, 132),
+        "Python" => (55, 118, 171),
+        "JavaScript" => (247, 223, 30),
+        "TypeScript" => (49, 120, 198),
+        "Go" => (0, 173, 216),
+        "Ruby" => (204, 52, 45),
+        "Java" => (176, 114, 25),
+        "C" => (85, 85, 85),
+        "C++" => (243, 75, 125),
+        "C/C++ Header" => (168, 132, 189),
+        "C#" => (104, 33, 122),
+        "PHP" => (119, 123, 180),
+        "Swift" => (255, 172, 69),
+        "Kotlin" => (169, 123, 255),
+        "Scala" => (194, 45, 64),
+        "HTML" => (227, 76, 38),
+        "CSS" => (86, 61, 124),
+        "SCSS" => (198, 83, 140),
+        "JSON" => (41, 41, 41),
+        "YAML" => (203, 23, 30),
+        "TOML" => (156, 66, 33),
+        "Markdown" => (8, 63, 161),
+        "Shell" => (137, 224, 81),
+        "SQL" => (224, 142, 42),
+        "Lua" => (0, 0, 128),
+        "R" => (25, 140, 231),
+        "Dart" => (0, 180, 171),
+        "Zig" => (236, 145, 92),
+        "Nim" => (255, 233, 83),
+        "Elixir" => (110, 74, 126),
+        "Erlang" => (161, 0, 52),
+        "Haskell" => (94, 80, 134),
+        "OCaml" => (238, 122, 0),
+        "Vue" => (65, 184, 131),
+        "Svelte" => (255, 62, 0),
+        _ => (255, 255, 255),
     }
 }
 
-fn colorize_bar(lang: &str, bar: &str) -> String {
-    match lang {
-        "Rust" => bar.truecolor(222, 165, 132).to_string(),
-        "Python" => bar.truecolor(55, 118, 171).to_string(),
-        "JavaScript" => bar.truecolor(247, 223, 30).to_string(),
-        "TypeScript" => bar.truecolor(49, 120, 198).to_string(),
-        "Go" => bar.truecolor(0, 173, 216).to_string(),
-        "Ruby" => bar.truecolor(204, 52, 45).to_string(),
-        "Java" => bar.truecolor(176, 114, 25).to_string(),
-        "C" => bar.truecolor(85, 85, 85).to_string(),
-        "C++" => bar.truecolor(243, 75, 125).to_string(),
-        "C/C++ Header" => bar.truecolor(168, 132, 189).to_string(),
-        "C#" => bar.truecolor(104, 33, 122).to_string(),
-        "PHP" => bar.truecolor(119, 123, 180).to_string(),
-        "Swift" => bar.truecolor(255, 172, 69).to_string(),
-        "Kotlin" => bar.truecolor(169, 123, 255).to_string(),
-        "Scala" => bar.truecolor(194, 45, 64).to_string(),
-        "HTML" => bar.truecolor(227, 76, 38).to_string(),
-        "CSS" => bar.truecolor(86, 61, 124).to_string(),
-        "SCSS" => bar.truecolor(198, 83, 140).to_string(),
-        "JSON" => bar.truecolor(41, 41, 41).to_string(),
-        "YAML" => bar.truecolor(203, 23, 30).to_string(),
-        "TOML" => bar.truecolor(156, 66, 33).to_string(),
-        "Markdown" => bar.truecolor(8, 63, 161).to_string(),
-        "Shell" => bar.truecolor(137, 224, 81).to_string(),
-        "SQL" => bar.truecolor(224, 142, 42).to_string(),
-        "Lua" => bar.truecolor(0, 0, 128).to_string(),
-        "R" => bar.truecolor(25, 140, 231).to_string(),
-        "Dart" => bar.truecolor(0, 180, 171).to_string(),
-        "Zig" => bar.truecolor(236, 145, 92).to_string(),
-        "Nim" => bar.truecolor(255, 233, 83).to_string(),
-        "Elixir" => bar.truecolor(110, 74, 126).to_string(),
-        "Erlang" => bar.truecolor(161, 0, 52).to_string(),
-        "Haskell" => bar.truecolor(94, 80, 134).to_string(),
-        "OCaml" => bar.truecolor(238, 122, 0).to_string(),
-        "Vue" => bar.truecolor(65, 184, 131).to_string(),
-        "Svelte" => bar.truecolor(255, 62, 0).to_string(),
-        _ => bar.white().to_string(),
-    }
+fn colorize(lang: &str, text: &str) -> String {
+    let (r, g, b) = get_color(lang);
+    text.truecolor(r, g, b).to_string()
 }
 
 fn count_lines(path: &PathBuf) -> usize {
@@ -146,15 +119,14 @@ fn count_lines(path: &PathBuf) -> usize {
     }
 }
 
-fn main() {
-    let args = Args::parse();
+fn count_lines_str(content: &str) -> usize {
+    content.lines().count()
+}
+
+fn scan_directory(path: &Path) -> HashMap<&'static str, usize> {
     let mut stats: HashMap<&'static str, usize> = HashMap::new();
 
-    let mut builder = WalkBuilder::new(&args.paths[0]);
-    for path in args.paths.iter().skip(1) {
-        builder.add(path);
-    }
-
+    let builder = WalkBuilder::new(path);
     for entry in builder.build().filter_map(|e| e.ok()) {
         if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
             if let Some(ext) = entry.path().extension() {
@@ -168,6 +140,10 @@ fn main() {
         }
     }
 
+    stats
+}
+
+fn print_stats(stats: &HashMap<&'static str, usize>) {
     if stats.is_empty() {
         println!("No code files found.");
         return;
@@ -190,22 +166,188 @@ fn main() {
         let bar_width = (percentage / 2.0) as usize;
         let bar = "█".repeat(bar_width);
 
+        let padded_lang = format!("{:>width$}", lang, width = max_lang_width);
+        let padded_count = format!("{:>width$}", count, width = max_count_width);
+
         println!(
-            "{:>width$}  {:>count_width$}  {:>5.1}%  {}",
-            colorize_language(lang),
-            count,
+            "{}  {}  {:>5.1}%  {}",
+            colorize(lang, &padded_lang),
+            padded_count,
             percentage,
-            colorize_bar(lang, &bar),
-            width = max_lang_width,
-            count_width = max_count_width,
+            colorize(lang, &bar),
         );
     }
     println!();
+    let padded_total_label = format!("{:>width$}", "Total", width = max_lang_width);
+    let padded_total_count = format!("{:>width$}", total, width = max_count_width);
     println!(
-        "{:>width$}  {:>count_width$}",
-        "Total".bold(),
-        total.to_string().bold(),
-        width = max_lang_width,
-        count_width = max_count_width,
+        "{}  {}",
+        padded_total_label.bold(),
+        padded_total_count.bold(),
     );
+}
+
+struct CommitInfo {
+    hash: String,
+    date: String,
+}
+
+fn get_commits(repo_path: &Path, samples: usize) -> Vec<CommitInfo> {
+    let output = Command::new("git")
+        .args(["log", "--format=%H %as", "--reverse"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to run git log");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let commits: Vec<CommitInfo> = stdout
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(2, ' ').collect();
+            if parts.len() == 2 {
+                Some(CommitInfo {
+                    hash: parts[0].to_string(),
+                    date: parts[1].to_string(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if commits.len() <= samples {
+        return commits;
+    }
+
+    // Sample evenly across history
+    let step = commits.len() as f64 / samples as f64;
+    let mut sampled = Vec::new();
+    for i in 0..samples {
+        let idx = (i as f64 * step) as usize;
+        if idx < commits.len() {
+            sampled.push(CommitInfo {
+                hash: commits[idx].hash.clone(),
+                date: commits[idx].date.clone(),
+            });
+        }
+    }
+
+    // Always include the latest commit
+    if let Some(last) = commits.last() {
+        if sampled.last().map(|c| &c.hash) != Some(&last.hash) {
+            sampled.push(CommitInfo {
+                hash: last.hash.clone(),
+                date: last.date.clone(),
+            });
+        }
+    }
+
+    sampled
+}
+
+fn count_lines_at_commit(repo_path: &Path, commit: &str) -> usize {
+    // Get list of files at this commit
+    let output = Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", commit])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to run git ls-tree");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut total = 0;
+
+    for file in stdout.lines() {
+        let ext = Path::new(file)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        if get_language(ext).is_some() {
+            // Get file content at this commit
+            let content_output = Command::new("git")
+                .args(["show", &format!("{}:{}", commit, file)])
+                .current_dir(repo_path)
+                .output();
+
+            if let Ok(output) = content_output {
+                if output.status.success() {
+                    let content = String::from_utf8_lossy(&output.stdout);
+                    total += count_lines_str(&content);
+                }
+            }
+        }
+    }
+
+    total
+}
+
+fn show_history(repo_path: &Path, samples: usize) {
+    let commits = get_commits(repo_path, samples);
+
+    if commits.is_empty() {
+        println!("No git history found.");
+        return;
+    }
+
+    println!("\nAnalyzing {} commits...\n", commits.len());
+
+    let mut history: Vec<(String, usize)> = Vec::new();
+    let mut max_lines: usize = 0;
+
+    for commit in &commits {
+        let lines = count_lines_at_commit(repo_path, &commit.hash);
+        max_lines = max_lines.max(lines);
+        history.push((commit.date.clone(), lines));
+        eprint!(".");
+    }
+    eprintln!();
+
+    // Find max for scaling
+    let max_count_width = history
+        .iter()
+        .map(|(_, count)| count.to_string().len())
+        .max()
+        .unwrap_or(0);
+
+    let bar_max_width = 40;
+
+    println!();
+    for (date, lines) in &history {
+        let bar_width = if max_lines > 0 {
+            (*lines as f64 / max_lines as f64 * bar_max_width as f64) as usize
+        } else {
+            0
+        };
+        let bar = "█".repeat(bar_width);
+
+        println!(
+            "{}  {:>width$}  {}",
+            date.bright_black(),
+            lines,
+            bar.green(),
+            width = max_count_width,
+        );
+    }
+    println!();
+}
+
+fn main() {
+    let args = Args::parse();
+
+    if args.history {
+        let repo_path = &args.paths[0];
+        show_history(repo_path, args.samples);
+        return;
+    }
+
+    let mut stats: HashMap<&'static str, usize> = HashMap::new();
+
+    for path in &args.paths {
+        let path_stats = scan_directory(path);
+        for (lang, count) in path_stats {
+            *stats.entry(lang).or_insert(0) += count;
+        }
+    }
+
+    print_stats(&stats);
 }
