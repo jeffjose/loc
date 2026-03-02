@@ -29,6 +29,10 @@ struct Args {
     /// Exclude languages (comma-separated, e.g., "json,yaml,md")
     #[arg(long, short = 'i', value_delimiter = ',')]
     ignore: Option<Vec<String>>,
+
+    /// Include files ignored by .gitignore
+    #[arg(long)]
+    no_gitignore: bool,
 }
 
 fn lang_matches(lang: &str, filter: &str) -> bool {
@@ -165,10 +169,15 @@ fn count_lines_str(content: &str) -> usize {
     content.lines().count()
 }
 
-fn scan_directory(path: &Path, include: &Option<Vec<String>>, exclude: &Option<Vec<String>>) -> HashMap<&'static str, usize> {
+fn scan_directory(path: &Path, include: &Option<Vec<String>>, exclude: &Option<Vec<String>>, no_gitignore: bool) -> HashMap<&'static str, usize> {
     let mut stats: HashMap<&'static str, usize> = HashMap::new();
 
-    let builder = WalkBuilder::new(path);
+    let mut builder = WalkBuilder::new(path);
+    if no_gitignore {
+        builder.git_ignore(false);
+        builder.git_global(false);
+        builder.git_exclude(false);
+    }
     for entry in builder.build().filter_map(|e| e.ok()) {
         if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
             if let Some(ext) = entry.path().extension() {
@@ -389,7 +398,7 @@ fn main() {
     let mut stats: HashMap<&'static str, usize> = HashMap::new();
 
     for path in &args.paths {
-        let path_stats = scan_directory(path, &args.lang, &args.ignore);
+        let path_stats = scan_directory(path, &args.lang, &args.ignore, args.no_gitignore);
         for (lang, count) in path_stats {
             *stats.entry(lang).or_insert(0) += count;
         }
