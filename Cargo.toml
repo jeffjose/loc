@@ -7,3 +7,6 @@ edition = "2021"
 clap = { version = "4", features = ["derive"] }
 colored = "2"
 ignore = "0.4"
+
+[build-dependencies]
+vergen-gitcl = "10.0.3"

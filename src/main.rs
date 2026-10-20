@@ -5,9 +5,30 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
+
+/// The version and the commit it was built from: `0.1.0-abc1234`, with
+/// `-dirty` if the tree had changes not committed.
+fn version() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION.get_or_init(|| {
+        // Unset where git could not be asked, or vergen's stand-in.
+        let Some(sha) =
+            option_env!("VERGEN_GIT_SHA").filter(|sha| !sha.is_empty() && !sha.contains("VERGEN"))
+        else {
+            return env!("CARGO_PKG_VERSION").to_string();
+        };
+        let dirty = if option_env!("VERGEN_GIT_DIRTY") == Some("true") {
+            "-dirty"
+        } else {
+            ""
+        };
+        format!("{}-{sha}{dirty}", env!("CARGO_PKG_VERSION"))
+    })
+}
 
 #[derive(Parser)]
-#[command(name = "loc")]
+#[command(name = "loc", version = version())]
 #[command(about = "Count lines of code by language")]
 struct Args {
     /// Directories to scan (defaults to current directory)
